@@ -1,16 +1,37 @@
 #!/usr/bin/python
 
 import argparse
-import getpass
 import os
 import pwd
 import re
+import subprocess
 
 import db
 import prompt
 
 MODE_INIT = 'init'
 MODE_ADD = 'add'
+MODE_LIST = 'list'
+
+
+def check_root():
+    if os.getuid() == 0:
+        pass
+    else:
+        prompt.fail('You must be root to execute this command')
+        exit(1)
+
+
+def copy_files_with_permission(files, dir, uid, gid, permission):
+    files = files.strip()
+    r = 0
+    for file in files.split():
+        r |= os.system('cp %s %s' % (file, dir))
+        abs_file = os.path.join(dir, os.path.basename(file))
+        r |= os.system('chown %s:%s %s' % (uid, gid, abs_file))
+        r |= os.system('chmod %s %s' % (permission, abs_file))
+    return r
+
 
 parser = argparse.ArgumentParser(prog='soma', description='PWN problem manager')
 parser.add_argument('--version', '-V', action='version', version='0.1.0')
@@ -24,6 +45,10 @@ parser_config.set_defaults(mode=MODE_INIT)
 # add a problem
 parser_add = subparsers.add_parser(MODE_ADD, description='add a problem')
 parser_add.set_defaults(mode=MODE_ADD)
+
+# list problems
+parser_list = subparsers.add_parser(MODE_LIST, description='list problems')
+parser_list.set_defaults(mode=MODE_LIST)
 
 args = parser.parse_args()
 
@@ -42,9 +67,9 @@ if args.mode == MODE_INIT:
             prompt.fail('Failed to create database')
             prompt.show(err)
             exit(1)
-
 elif args.mode == MODE_ADD:
-    prompt.warning('Make sure you have root privilege')
+    # TODO: prevent injection
+    check_root()
 
     # common config
     prob_name = prompt.string('Problem name: ', pattern=prompt.Validators.no_space)
@@ -88,17 +113,6 @@ Is this correct?
                 if r:
                     raise Exception('Failed to create the home directory')
 
-                def copy_files_with_permission(files, dir, uid, gid, permission):
-                    files = files.strip()
-                    r = 0
-                    for file in files.split():
-                        r |= os.system('cp %s %s' % (file, dir))
-                        abs_file = os.path.join(dir, os.path.basename(file))
-                        r |= os.system('chown %s:%s %s' % (uid, gid, abs_file))
-                        r |= os.system('chmod %s %s' % (permission, abs_file))
-                    return r
-
-                # TODO: prevent injection
                 prompt.info('Copying problem files')
                 binaries = prompt.anything('Problem binaries (%s:%s 4550)\n' % (prob_user_pwn, prob_user))
                 if copy_files_with_permission(binaries, prob_home, prob_user_pwn, prob_user, '4550'):
@@ -126,5 +140,73 @@ Is this correct?
         else:
             prompt.warning('Problem creation canceled')
     else:
-        # TODO: remote problem config
+        prob_home = os.path.join(db.get_config('soma_path'), prob_user)
+
+        try:
+            prompt.info('Creating new user')
+            r = 0
+            r |= os.system(
+                'adduser --quiet %s --home %s --disabled-password --shell /bin/bash --gecos "" --no-create-home' % (
+                prob_user, prob_home))
+            if r:
+                raise Exception('Failed to create user')
+
+            prompt.info('Creating the home directory')
+            soma_user = db.get_config('soma_user')
+            r |= os.system('mkdir %s' % prob_home)
+            r |= os.system('chown %s:%s %s' % (soma_user, prob_user, prob_home))
+            r |= os.system('chmod 750 %s' % prob_home)
+            if r:
+                raise Exception('Failed to create the home directory')
+
+            prompt.info('Copying problem files')
+            binaries = prompt.anything('Problem binaries (%s:%s 550)\n' % (soma_user, prob_user))
+            if copy_files_with_permission(binaries, prob_home, soma_user, prob_user, '550'):
+                raise Exception('Failed to copy binaries')
+
+            other_files = prompt.anything('Other readable files such as README (%s:%s 644)\n' % (soma_user, soma_user))
+            if copy_files_with_permission(other_files, prob_home, soma_user, soma_user, '644'):
+                raise Exception('Failed to copy other files')
+
+            prompt.info('Creating flag file')
+            flag_name = prompt.string('Flag file name (blank to use `flag`): ', default='flag')
+            flag_content = prompt.string('Flag: ')
+            flag_abspath = os.path.join(prob_home, flag_name)
+            r |= os.system('printf "%s\n" > %s' % (flag_content, flag_abspath))
+            r |= os.system('chown %s:%s %s' % (soma_user, prob_user, flag_abspath))
+            r |= os.system('chmod 440 %s' % flag_abspath)
+            if r:
+                raise Exception('Failed to create flag file')
+
+            prob_entry = prompt.string('Please provide entry file command: ')
+            prob_port = 0
+            prob_proc = None
+            while True:
+                prob_port = prompt.num('Port Number: ', 0, 32767)
+                if not db.empty_port(prob_port):
+                    prompt.warning('Another problem uses that port')
+                    continue
+                try:
+                    prob_proc = subprocess.Popen(['sudo', '-u', prob_user, 'socket', '-fsl', '-p', prob_entry, '-s', str(prob_port)], cwd=prob_home)
+                    break
+                except Exception:
+                    prompt.fail('Cannot execute command. Try again.')
+
+            prompt.info('Add problem information to DB')
+            db.add_remote(prob_name, prob_user, prob_entry, prob_port, prob_proc.pid)
+        except Exception as err:
+            prompt.fail(str(err))
+            exit(1)
         pass
+elif args.mode == MODE_LIST:
+    prompt.show('[ Local Problems ]')
+    prompt.info('%-30s%-20s%-25s' % ('Name', 'ID', 'Password'))
+    for prob in db.local_list():
+        prompt.show('%-30s%-20s%-25s' % (prob[0], prob[1], prob[2] if prob[3] else '**HIDDEN**'))
+
+    prompt.show('')
+
+    prompt.show('[ Remote Problems ]')
+    prompt.info('%-30s%-7s' % ('Name', 'Port'))
+    for prob in db.remote_list():
+        prompt.show('%-30s%-7s' % (prob[0], prob[1]))

@@ -86,3 +86,14 @@ def directory(msg, default=''):
         path = string(msg, default)
         if os.path.isdir(path):
             return os.path.abspath(path)
+
+
+def num(msg, min=0, max=2147483647):
+    while True:
+        num = string(msg)
+        try:
+            num = int(num)
+            if min <= num <= max:
+                return num
+        except Exception:
+            pass
