@@ -114,8 +114,8 @@ Is this correct?
                     raise Exception('Failed to create the home directory')
 
                 prompt.info('Copying problem files')
-                binaries = prompt.anything('Problem binaries (%s:%s 4550)\n' % (prob_user_pwn, prob_user))
-                if copy_files_with_permission(binaries, prob_home, prob_user_pwn, prob_user, '4550'):
+                binaries = prompt.anything('Problem binaries (%s:%s 2555)\n' % (soma_user, prob_user_pwn))
+                if copy_files_with_permission(binaries, prob_home, soma_user, prob_user_pwn, '2555'):
                     raise Exception('Failed to copy binaries')
 
                 other_files = prompt.anything('Other readable files such as README (%s:%s 644)\n' % (soma_user, soma_user))
