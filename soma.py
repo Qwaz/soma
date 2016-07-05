@@ -4,7 +4,6 @@ import argparse
 import os
 import pwd
 import re
-import subprocess
 
 import db
 import prompt
@@ -12,6 +11,7 @@ import prompt
 MODE_INIT = 'init'
 MODE_ADD = 'add'
 MODE_LIST = 'list'
+MODE_RESTART = 'restart'
 
 
 def check_root():
@@ -20,6 +20,21 @@ def check_root():
     else:
         prompt.fail('You must be root to execute this command')
         exit(1)
+
+
+def open_daemon(prob_user, prob_port, prob_entry, prob_home):
+    pid = 0
+    try:
+        pid = os.fork()
+    except OSError as e:
+        exit(1)
+    if pid == 0:
+        os.chdir(prob_home)
+        user = pwd.getpwnam(prob_user)
+        os.setregid(user.pw_gid, user.pw_gid)
+        os.setreuid(user.pw_uid, user.pw_uid)
+        os.execv('/usr/bin/socat', ['socat', 'tcp-listen:%d,fork,reuseaddr' % prob_port, 'exec:%s,PTY,CTTY,raw,echo=0' % prob_entry])
+    return pid
 
 
 def copy_files_with_permission(files, dir, uid, gid, permission):
@@ -33,8 +48,24 @@ def copy_files_with_permission(files, dir, uid, gid, permission):
     return r
 
 
+def show_local():
+    prompt.show('[ Local Problems ]')
+    prompt.info('%-30s%-20s%-25s' % ('Name', 'ID', 'Password'))
+    for prob in db.local_list():
+        prompt.show('%-30s%-20s%-25s' % (prob[0], prob[1], prob[2] if prob[3] else '**HIDDEN**'))
+    prompt.show('')
+
+
+def show_remote():
+    prompt.show('[ Remote Problems ]')
+    prompt.info('%-30s%-7s' % ('Name', 'Port'))
+    for prob in db.remote_list():
+        prompt.show('%-30s%-7s' % (prob[0], prob[1]))
+    prompt.show('')
+
+
 parser = argparse.ArgumentParser(prog='soma', description='PWN problem manager')
-parser.add_argument('--version', '-V', action='version', version='0.1.0')
+parser.add_argument('--version', '-V', action='version', version='0.2.0')
 subparsers = parser.add_subparsers(help='possible command list', dest='mode')
 subparsers.required = True
 
@@ -49,6 +80,10 @@ parser_add.set_defaults(mode=MODE_ADD)
 # list problems
 parser_list = subparsers.add_parser(MODE_LIST, description='list problems')
 parser_list.set_defaults(mode=MODE_LIST)
+
+# restart remote problem
+parser_restart = subparsers.add_parser(MODE_RESTART, description='restart a remote problem')
+parser_restart.set_defaults(mode=MODE_RESTART)
 
 args = parser.parse_args()
 
@@ -69,6 +104,7 @@ if args.mode == MODE_INIT:
             exit(1)
 elif args.mode == MODE_ADD:
     # TODO: prevent injection
+    # TODO: revert changes on fail
     check_root()
 
     # common config
@@ -180,33 +216,43 @@ Is this correct?
 
             prob_entry = prompt.string('Please provide entry file command: ')
             prob_port = 0
-            prob_proc = None
+            prob_pid = 0
             while True:
                 prob_port = prompt.num('Port Number: ', 0, 32767)
                 if not db.empty_port(prob_port):
                     prompt.warning('Another problem uses that port')
                     continue
                 try:
-                    prob_proc = subprocess.Popen(['sudo', '-u', prob_user, 'socket', '-fsl', '-p', prob_entry, '-s', str(prob_port)], cwd=prob_home)
+                    prob_pid = open_daemon(prob_user, prob_port, prob_entry, prob_home)
                     break
                 except Exception:
                     prompt.fail('Cannot execute command. Try again.')
 
             prompt.info('Add problem information to DB')
-            db.add_remote(prob_name, prob_user, prob_entry, prob_port, prob_proc.pid)
+            db.add_remote(prob_name, prob_user, prob_entry, prob_port, prob_pid)
         except Exception as err:
             prompt.fail(str(err))
             exit(1)
         pass
 elif args.mode == MODE_LIST:
-    prompt.show('[ Local Problems ]')
-    prompt.info('%-30s%-20s%-25s' % ('Name', 'ID', 'Password'))
-    for prob in db.local_list():
-        prompt.show('%-30s%-20s%-25s' % (prob[0], prob[1], prob[2] if prob[3] else '**HIDDEN**'))
+    show_local()
+    show_remote()
+elif args.mode == MODE_RESTART:
+    check_root()
+    show_remote()
 
-    prompt.show('')
+    prob_name = ''
+    prob = None
+    while not prob:
+        prob_name = prompt.string('Problem Name: ')
+        prob = db.get_remote_problem(prob_name)
 
-    prompt.show('[ Remote Problems ]')
-    prompt.info('%-30s%-7s' % ('Name', 'Port'))
-    for prob in db.remote_list():
-        prompt.show('%-30s%-7s' % (prob[0], prob[1]))
+    prob_user, prob_entry, prob_port, prob_pid = prob
+    prob_home = os.path.join(db.get_config('soma_path'), prob_user)
+
+    prompt.info('Kill existing process')
+    os.system('kill -9 %d > /dev/null 2>&1' % prob_pid)
+
+    prompt.info('Restarting process')
+    prob_pid = open_daemon(prob_user, prob_port, prob_entry, prob_home)
+    db.modify_remote(prob_name, prob_port, prob_pid)

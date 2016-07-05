@@ -21,13 +21,21 @@ def local_list():
 
 
 def remote_list():
-    c.execute('SELECT name, port FROM problem_remote')
+    c.execute('SELECT name, port, pid FROM problem_remote')
     return c.fetchall()
 
 
 def empty_port(port):
     c.execute('SELECT id FROM problem_remote WHERE port = ?', (port,))
     return len(c.fetchall()) == 0
+
+
+def get_remote_problem(prob_name):
+    c.execute('SELECT user, entry, port, pid FROM problem_remote WHERE name = ?', (prob_name,))
+    probs = c.fetchall()
+    if len(probs) == 0:
+        return None
+    return probs[0]
 
 
 # create tables
@@ -75,4 +83,9 @@ def add_local(name, user, password, show_password, user_pwn):
 # create remote problem
 def add_remote(name, user, entry, port, pid):
     c.execute('INSERT INTO problem_remote (name, user, entry, port, pid) VALUES (?, ?, ?, ?, ?)', (name, user, entry, port, pid))
+    conn.commit()
+
+
+def modify_remote(name, port, pid):
+    c.execute('UPDATE problem_remote SET port = ?, pid = ? WHERE name = ?', (port, pid, name))
     conn.commit()
