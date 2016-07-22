@@ -16,12 +16,12 @@ def get_config(name):
 
 
 def local_list():
-    c.execute('SELECT name, user, password, show_password FROM problem_local')
+    c.execute('SELECT name, source, user, password, show_password FROM problem_local ORDER BY name')
     return c.fetchall()
 
 
 def remote_list():
-    c.execute('SELECT name, port, pid FROM problem_remote')
+    c.execute('SELECT name, source, port, pid FROM problem_remote ORDER BY name')
     return c.fetchall()
 
 
@@ -49,6 +49,7 @@ def create_db(soma_user, soma_path):
 
         CREATE TABLE problem_local(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source varchar(100),
             name varchar(50),
             user varchar(50),
             password varchar(255),
@@ -58,6 +59,7 @@ def create_db(soma_user, soma_path):
 
         CREATE TABLE problem_remote(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source varchar(100),
             name varchar(50),
             user varchar(50),
             entry varchar(255),
@@ -75,14 +77,20 @@ def create_db(soma_user, soma_path):
 
 
 # create local problem
-def add_local(name, user, password, show_password, user_pwn):
-    c.execute('INSERT INTO problem_local (name, user, password, show_password, user_solve) VALUES (?, ?, ?, ?, ?)', (name, user, password, show_password, user_pwn))
+def add_local(source, name, user, password, show_password, user_pwn):
+    c.execute(
+        'INSERT INTO problem_local (source, name, user, password, show_password, user_solve) VALUES (?, ?, ?, ?, ?, ?)',
+        (source, name, user, password, show_password, user_pwn)
+    )
     conn.commit()
 
 
 # create remote problem
-def add_remote(name, user, entry, port, pid):
-    c.execute('INSERT INTO problem_remote (name, user, entry, port, pid) VALUES (?, ?, ?, ?, ?)', (name, user, entry, port, pid))
+def add_remote(source, name, user, entry, port, pid):
+    c.execute(
+        'INSERT INTO problem_remote (source, name, user, entry, port, pid) VALUES (?, ?, ?, ?, ?, ?)',
+        (source, name, user, entry, port, pid)
+    )
     conn.commit()
 
 

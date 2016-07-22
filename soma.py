@@ -12,6 +12,7 @@ MODE_INIT = 'init'
 MODE_ADD = 'add'
 MODE_LIST = 'list'
 MODE_RESTART = 'restart'
+MODE_DOWNLOAD = 'download'
 
 
 def check_root():
@@ -50,22 +51,22 @@ def copy_files_with_permission(files, dir, uid, gid, permission):
 
 def show_local():
     prompt.show('[ Local Problems ]')
-    prompt.info('%-30s%-20s%-25s' % ('Name', 'ID', 'Password'))
+    prompt.info('%-20s%-20s%-15s%-15s' % ('Name', 'Source', 'ID', 'Password'))
     for prob in db.local_list():
-        prompt.show('%-30s%-20s%-25s' % (prob[0], prob[1], prob[2] if prob[3] else '**HIDDEN**'))
+        prompt.show('%-20s%-20s%-15s%-15s' % (prob[0], prob[1], prob[2], prob[3] if prob[4] else '**HIDDEN**'))
     prompt.show('')
 
 
 def show_remote():
     prompt.show('[ Remote Problems ]')
-    prompt.info('%-30s%-7s' % ('Name', 'Port'))
+    prompt.info('%-20s%-20s%-7s' % ('Name', 'Source', 'Port'))
     for prob in db.remote_list():
-        prompt.show('%-30s%-7s' % (prob[0], prob[1]))
+        prompt.show('%-20s%-20s%-7s' % (prob[0], prob[1], prob[2]))
     prompt.show('')
 
 
 parser = argparse.ArgumentParser(prog='soma', description='PWN problem manager')
-parser.add_argument('--version', '-V', action='version', version='0.2.0')
+parser.add_argument('--version', '-V', action='version', version='0.3.0')
 subparsers = parser.add_subparsers(help='possible command list', dest='mode')
 subparsers.required = True
 
@@ -85,7 +86,19 @@ parser_list.set_defaults(mode=MODE_LIST)
 parser_restart = subparsers.add_parser(MODE_RESTART, description='restart a remote problem')
 parser_restart.set_defaults(mode=MODE_RESTART)
 
+# download remote problem binary
+parser_download = subparsers.add_parser(MODE_DOWNLOAD, description='download remote problem binary')
+parser_download.set_defaults(mode=MODE_DOWNLOAD)
+
 args = parser.parse_args()
+
+
+# check db is existing
+if args.mode != MODE_INIT:
+    if db.get_config('initialized') is None:
+        prompt.fail('Please initialize database first (soma init)')
+        exit(1)
+
 
 if args.mode == MODE_INIT:
     if db.get_config('initialized') is not None:
@@ -108,6 +121,7 @@ elif args.mode == MODE_ADD:
     check_root()
 
     # common config
+    prob_source = prompt.string('Problem source: ', pattern=prompt.Validators.no_space)
     prob_name = prompt.string('Problem name: ', pattern=prompt.Validators.no_space)
     prob_type = prompt.choice('Problem type (local / remote): ', ('local', 'remote'))
 
@@ -123,12 +137,13 @@ elif args.mode == MODE_ADD:
         prob_user_pwn = prompt.string('Username for setuid (blank to use `%s`): ' % (prob_user + '_pwn'), default=prob_user + '_pwn', pattern=prompt.Validators.username)
         if prompt.yn('''
 Is this correct?
+    Problem Source: %s
     Problem Name: %s
     Problem Type: %s
     Username: %s
     Password: %s (%s)
     Username for setuid: %s
-''' % (prob_name, prob_type, prob_user, prob_password, 'public' if prob_show_password else 'private', prob_user_pwn)):
+''' % (prob_source, prob_name, prob_type, prob_user, prob_password, 'public' if prob_show_password else 'private', prob_user_pwn)):
             prob_home = os.path.join(db.get_config('soma_path'), prob_user)
 
             try:
@@ -142,10 +157,10 @@ Is this correct?
                     raise Exception('Failed to create user')
 
                 prompt.info('Creating the home directory')
-                soma_user  = db.get_config('soma_user')
+                soma_user = db.get_config('soma_user')
                 r |= os.system('mkdir %s' % prob_home)
                 r |= os.system('chown %s:%s %s' % (soma_user, prob_user, prob_home))
-                r |= os.system('chmod 750 %s' % prob_home)
+                r |= os.system('chmod 755 %s' % prob_home)
                 if r:
                     raise Exception('Failed to create the home directory')
 
@@ -154,14 +169,13 @@ Is this correct?
                 if copy_files_with_permission(binaries, prob_home, soma_user, prob_user_pwn, '2555'):
                     raise Exception('Failed to copy binaries')
 
-                other_files = prompt.anything('Other readable files such as README (%s:%s 644)\n' % (soma_user, soma_user))
+                other_files = prompt.anything('Other readable files such as README (%s:%s 644)\n' % (soma_user, prob_user_pwn))
                 if copy_files_with_permission(other_files, prob_home, soma_user, soma_user, '644'):
                     raise Exception('Failed to copy other files')
 
                 prompt.info('Creating flag file')
-                flag_name = prompt.string('Flag file name (blank to use `flag`): ', default='flag')
                 flag_content = prompt.string('Flag: ')
-                flag_abspath = os.path.join(prob_home, flag_name)
+                flag_abspath = os.path.join(prob_home, 'flag')
                 r |= os.system('printf "%s\n" > %s' % (flag_content, flag_abspath))
                 r |= os.system('chown %s:%s %s' % (soma_user, prob_user_pwn, flag_abspath))
                 r |= os.system('chmod 440 %s' % flag_abspath)
@@ -169,7 +183,7 @@ Is this correct?
                     raise Exception('Failed to create flag file')
 
                 prompt.info('Add problem information to DB')
-                db.add_local(prob_name, prob_user, prob_password, prob_show_password, prob_user_pwn)
+                db.add_local(prob_source, prob_name, prob_user, prob_password, prob_show_password, prob_user_pwn)
             except Exception as err:
                 prompt.fail(str(err))
                 exit(1)
@@ -181,9 +195,7 @@ Is this correct?
         try:
             prompt.info('Creating new user')
             r = 0
-            r |= os.system(
-                'adduser --quiet %s --home %s --disabled-password --shell /bin/bash --gecos "" --no-create-home' % (
-                prob_user, prob_home))
+            r |= os.system('adduser --quiet %s --home %s --disabled-password --shell /bin/bash --gecos "" --no-create-home' % (prob_user, prob_home))
             if r:
                 raise Exception('Failed to create user')
 
@@ -191,13 +203,13 @@ Is this correct?
             soma_user = db.get_config('soma_user')
             r |= os.system('mkdir %s' % prob_home)
             r |= os.system('chown %s:%s %s' % (soma_user, prob_user, prob_home))
-            r |= os.system('chmod 750 %s' % prob_home)
+            r |= os.system('chmod 755 %s' % prob_home)
             if r:
                 raise Exception('Failed to create the home directory')
 
             prompt.info('Copying problem files')
-            binaries = prompt.anything('Problem binaries (%s:%s 550)\n' % (soma_user, prob_user))
-            if copy_files_with_permission(binaries, prob_home, soma_user, prob_user, '550'):
+            binaries = prompt.anything('Problem binaries (%s:%s 554)\n' % (soma_user, prob_user))
+            if copy_files_with_permission(binaries, prob_home, soma_user, prob_user, '554'):
                 raise Exception('Failed to copy binaries')
 
             other_files = prompt.anything('Other readable files such as README (%s:%s 644)\n' % (soma_user, soma_user))
@@ -205,9 +217,8 @@ Is this correct?
                 raise Exception('Failed to copy other files')
 
             prompt.info('Creating flag file')
-            flag_name = prompt.string('Flag file name (blank to use `flag`): ', default='flag')
             flag_content = prompt.string('Flag: ')
-            flag_abspath = os.path.join(prob_home, flag_name)
+            flag_abspath = os.path.join(prob_home, 'flag')
             r |= os.system('printf "%s\n" > %s' % (flag_content, flag_abspath))
             r |= os.system('chown %s:%s %s' % (soma_user, prob_user, flag_abspath))
             r |= os.system('chmod 440 %s' % flag_abspath)
@@ -229,7 +240,7 @@ Is this correct?
                     prompt.fail('Cannot execute command. Try again.')
 
             prompt.info('Add problem information to DB')
-            db.add_remote(prob_name, prob_user, prob_entry, prob_port, prob_pid)
+            db.add_remote(prob_source, prob_name, prob_user, prob_entry, prob_port, prob_pid)
         except Exception as err:
             prompt.fail(str(err))
             exit(1)
@@ -256,3 +267,20 @@ elif args.mode == MODE_RESTART:
     prompt.info('Restarting process')
     prob_pid = open_daemon(prob_user, prob_port, prob_entry, prob_home)
     db.modify_remote(prob_name, prob_port, prob_pid)
+elif args.mode == MODE_DOWNLOAD:
+    show_remote()
+
+    prob_name = ''
+    prob = None
+    while not prob:
+        prob_name = prompt.string('Problem Name: ')
+        prob = db.get_remote_problem(prob_name)
+
+    prob_user, prob_entry, prob_port, prob_pid = prob
+    prob_home = os.path.join(db.get_config('soma_path'), prob_user)
+    r = os.system('cp %s ./' % os.path.join(prob_home, prob_entry))
+
+    if r == 0:
+        prompt.success('Successfully copied the binary file')
+    else:
+        prompt.fail('Failed to copy the binary file')

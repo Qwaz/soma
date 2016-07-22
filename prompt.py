@@ -81,11 +81,17 @@ def string(msg, default='', pattern=''):
                     return response
 
 
-def directory(msg, default=''):
+def directory(msg, default='', create=False):
     while True:
         path = string(msg, default)
         if os.path.isdir(path):
             return os.path.abspath(path)
+        elif not os.path.exists(path) and create:
+            try:
+                os.makedirs(path)
+                return os.path.abspath(path)
+            except OSError:
+                fail('Try with another path')
 
 
 def num(msg, min=0, max=2147483647):
