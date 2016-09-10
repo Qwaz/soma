@@ -12,6 +12,7 @@ MODE_INIT = 'init'
 MODE_ADD = 'add'
 MODE_LIST = 'list'
 MODE_RESTART = 'restart'
+MODE_RESTART_ALL = 'restart-all'
 MODE_DOWNLOAD = 'download'
 
 
@@ -51,17 +52,17 @@ def copy_files_with_permission(files, dir, uid, gid, permission):
 
 def show_local():
     prompt.show('[ Local Problems ]')
-    prompt.info('%-20s%-20s%-15s%-15s' % ('Name', 'Source', 'ID', 'Password'))
+    prompt.info('%-20s%-24s%-15s%-15s' % ('Name', 'Source', 'ID', 'Password'))
     for prob in db.local_list():
-        prompt.show('%-20s%-20s%-15s%-15s' % (prob[0], prob[1], prob[2], prob[3] if prob[4] else '**HIDDEN**'))
+        prompt.show('%-20s%-24s%-15s%-15s' % (prob[0], prob[1], prob[2], prob[3] if prob[4] else '**HIDDEN**'))
     prompt.show('')
 
 
 def show_remote():
     prompt.show('[ Remote Problems ]')
-    prompt.info('%-20s%-20s%-7s' % ('Name', 'Source', 'Port'))
+    prompt.info('%-20s%-24s%-7s' % ('Name', 'Source', 'Port'))
     for prob in db.remote_list():
-        prompt.show('%-20s%-20s%-7s' % (prob[0], prob[1], prob[2]))
+        prompt.show('%-20s%-24s%-7s' % (prob[0], prob[1], prob[2]))
     prompt.show('')
 
 
@@ -85,6 +86,9 @@ parser_list.set_defaults(mode=MODE_LIST)
 # restart remote problem
 parser_restart = subparsers.add_parser(MODE_RESTART, description='restart a remote problem')
 parser_restart.set_defaults(mode=MODE_RESTART)
+
+parser_restart_all = subparsers.add_parser(MODE_RESTART_ALL, description='restart all remote problems')
+parser_restart_all.set_defaults(mode=MODE_RESTART_ALL)
 
 # download remote problem binary
 parser_download = subparsers.add_parser(MODE_DOWNLOAD, description='download remote problem binary')
@@ -267,6 +271,19 @@ elif args.mode == MODE_RESTART:
     prompt.info('Restarting process')
     prob_pid = open_daemon(prob_user, prob_port, prob_entry, prob_home)
     db.modify_remote(prob_name, prob_port, prob_pid)
+elif args.mode == MODE_RESTART_ALL:
+    check_root()
+
+    for prob in db.remote_list():
+        prob_name, prob_source, prob_port, prob_pid = prob
+        prob_user, prob_entry, prob_port, prob_pid = db.get_remote_problem(prob_name)
+        prob_home = os.path.join(db.get_config('soma_path'), prob_user)
+
+        os.system('kill -9 %d > /dev/null 2>&1' % prob_pid)
+
+        prompt.info('Restarting process %s' % prob_name)
+        prob_pid = open_daemon(prob_user, prob_port, prob_entry, prob_home)
+        db.modify_remote(prob_name, prob_port, prob_pid)
 elif args.mode == MODE_DOWNLOAD:
     show_remote()
 
