@@ -35,7 +35,7 @@ def open_daemon(prob_user, prob_port, prob_entry, prob_home):
         user = pwd.getpwnam(prob_user)
         os.setregid(user.pw_gid, user.pw_gid)
         os.setreuid(user.pw_uid, user.pw_uid)
-        os.execv('/usr/bin/socat', ['socat', 'tcp-listen:%d,fork,reuseaddr' % prob_port, 'exec:%s,PTY,CTTY,raw,echo=0' % prob_entry])
+        os.execv('/usr/bin/socat', ['socat', 'tcp-listen:%d,fork,reuseaddr,bind=127.0.0.1' % prob_port, 'exec:%s,PTY,CTTY,raw,echo=0' % prob_entry])
     return pid
 
 
